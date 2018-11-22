@@ -1,24 +1,14 @@
-import * as r from 'ramda';
 import Web3 = require('web3');
-import { Transaction, BlockHeader } from 'web3/eth/types';
+import { BlockHeader } from 'web3/eth/types';
 import { Provider, WebsocketProvider } from 'web3/providers';
+import { EventListener } from './m/utils';
 
 export default class Connector {
     public web3: Web3 = new Web3(null);
-    private txListeners: ((tx: Transaction) => void)[] = [];
+    private blockListeners: EventListener<BlockHeader>[] = [];
 
     connect (makeProvider: () => Provider) {
         const ping = () => this.web3.eth.getBlockNumber();
-        const blockHandler = (blockHash: string) => {
-            this.web3.eth.getBlockTransactionCount(blockHash)
-            .then(count => {
-                const seqs = r.range(0, count);
-                Promise.all(seqs.map(seq => this.web3.eth.getTransactionFromBlock(blockHash as any, seq)))
-                .then(txs => {
-                    txs.forEach(tx => this.txListeners.forEach(l => l(tx)));
-                });
-            });
-        }
     
         this.web3.setProvider(makeProvider());
 
@@ -30,9 +20,8 @@ export default class Connector {
                 if (error) {
                     throw error;
                 }
-                //todo: 從上一次處理完的 block 處繼續
                 const header: BlockHeader = data as any;
-                blockHandler(header.hash);
+                this.blockListeners.forEach(l => l(header));
             });
         });
     
@@ -46,7 +35,7 @@ export default class Connector {
         });
     }
 
-    onNewTransaction (cb: (tx: Transaction) => void) {
-        this.txListeners.push(cb);
+    onNewBlock (listener: EventListener<BlockHeader>) {
+        this.blockListeners.push(listener);
     }
 }

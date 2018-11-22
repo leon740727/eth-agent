@@ -1,3 +1,4 @@
+import * as r from 'ramda';
 import Web3 = require('web3');
 import { ABIDefinition  } from 'web3/eth/abi';
 import { Provider } from 'web3/providers';
@@ -66,22 +67,23 @@ export class Agent {
     constructor (
         private makeProvider: () => Provider,
     ) {
-        this.conn.onNewTransaction(tx => {
-            this.web3.eth.getTransactionReceipt(tx.hash)
-            .then(receipt => receipt.logs || [])
-            .then(logs => {
-                logs.forEach(log => {
-                    this.logListeners
-                    .filter(listener => toAddress(listener.contract) === toAddress(log.address))
-                    .forEach(listener => {
-                        const data = utils.decodeLog(this.web3, log, [listener.abi]);
-                        if (data) {
-                            listener.cb(data.parameters as JsonObject);
-                        }
-                    });
+        this.conn.onNewBlock(async block => {
+            const count = await this.web3.eth.getBlockTransactionCount(block.hash);
+            const idxs = r.range(0, count);
+            const txs = await Promise.all(idxs.map(i => this.web3.eth.getTransactionFromBlock(block.hash as any, i)));
+            const receipts = await Promise.all(txs.map(tx => this.web3.eth.getTransactionReceipt(tx.hash)));
+            const logs = receipts.map(r => r.logs || []).reduce((acc, i) => acc.concat(i), []);
+            logs.forEach(log => {
+                this.logListeners
+                .filter(listener => toAddress(listener.contract) === toAddress(log.address))
+                .forEach(listener => {
+                    const data = utils.decodeLog(this.web3, log, [listener.abi]);
+                    if (data) {
+                        listener.cb(data.parameters as JsonObject);
+                    }
                 });
             });
-        })
+        });
     }
 
     get web3 (): Web3 {
