@@ -1,0 +1,16 @@
+{
+    "compilerOptions": {
+        "target": "ES6",
+        "experimentalDecorators": true,
+        "jsx": "react",
+        "module": "commonjs"
+    },
+    "files": [
+        "index.ts",
+        "example/agent.ts",
+        "example/client.ts",
+    ],
+    "include": [
+        "m/@type/ethereumjs-util.d.ts",
+    ]
+}
