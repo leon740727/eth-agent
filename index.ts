@@ -1,9 +1,8 @@
-import * as r from 'ramda';
 import Web3 = require('web3');
 import { ABIDefinition  } from 'web3/eth/abi';
-import { Log } from 'web3/types';
 import { Provider } from 'web3/providers';
 import http = require('http');
+import * as utils from 'eth-utils';
 import Connector from './connector';
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
@@ -54,26 +53,6 @@ type LogListener = {
     cb: (data: JsonObject) => void,
 }
 
-/**
- * @param abis: 所有已知的 abi，會試著自動配對
- * @returns 可能回傳 null (當沒有找到適合的 abi 時)
- */
-function logData (web3: Web3, log: Log, abis: ABIDefinition[]): JsonObject {
-    function eventSig1 (log: Log) {
-        return log.topics ? log.topics[0] : null;
-    }
-    const eventSig2 = (abi: ABIDefinition) => {
-        return web3.eth.abi.encodeEventSignature(r.pick(['name','type','inputs'], abi));
-    }
-
-    const abi = abis.filter(abi => eventSig2(abi) === eventSig1(log))[0];
-    if (abi) {
-        return web3.eth.abi.decodeLog(abi.inputs, log.data, log.topics) as JsonObject;
-    } else {
-        return null;
-    }
-}
-
 function toAddress (address: string) {
     return address.slice(-40).toLowerCase();
 }
@@ -95,9 +74,9 @@ export class Agent {
                     this.logListeners
                     .filter(listener => toAddress(listener.contract) === toAddress(log.address))
                     .forEach(listener => {
-                        const data = logData(this.web3, log, [listener.abi]);
+                        const data = utils.decodeLog(this.web3, log, [listener.abi]);
                         if (data) {
-                            listener.cb(data);
+                            listener.cb(data.parameters as JsonObject);
                         }
                     });
                 });
