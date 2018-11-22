@@ -5,6 +5,7 @@ import { Provider } from 'web3/providers';
 import http = require('http');
 import * as utils from 'eth-utils';
 import Connector from './connector';
+import { EventListener } from './m/utils';
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
 
@@ -15,7 +16,7 @@ export type Json = Primitive | Primitive[] | {[field: string]: Json} | {[field: 
 export type JsonObject = {[field: string]: Json};
 
 type Connection = {
-    on (event: string, handler: (msg) => void);
+    on (event: string, handler: EventListener<any>);
     sendUTF (data: string): void;
     close (reason);
 }
@@ -51,7 +52,7 @@ export type Event = {
 type LogListener = {
     contract: string,
     abi: ABIDefinition,
-    cb: (data: JsonObject) => void,
+    cb: EventListener<JsonObject>,
 }
 
 function toAddress (address: string) {
@@ -156,7 +157,7 @@ export class Agent {
     }
 
     /** 當 ethereum 節點收到某個合約的某個 event 時觸發 */
-    on (contract: string, abi: ABIDefinition, cb: (data: JsonObject) => void) {
+    on (contract: string, abi: ABIDefinition, cb: EventListener<JsonObject>) {
         this.logListeners.push({contract, abi, cb});
     }
 
