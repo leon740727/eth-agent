@@ -1,10 +1,11 @@
-import * as r from 'ramda';
 import Web3 = require('web3');
+import { Block } from 'web3/eth/types';
 import { ABIDefinition  } from 'web3/eth/abi';
 import { Provider } from 'web3/providers';
 import http = require('http');
 import * as utils from 'eth-utils';
 import Connector from './connector';
+import BlockStream from './m/block-stream';
 import { EventListener } from './m/utils';
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
@@ -59,6 +60,22 @@ function toAddress (address: string) {
     return address.slice(-40).toLowerCase();
 }
 
+async function processLog (web3: Web3, block: Block, logListeners: LogListener[]) {
+    const receipts = await Promise.all(block.transactions.map(tx => web3.eth.getTransactionReceipt(tx.hash)));
+    const logs = receipts.map(r => r.logs || [])
+        .reduce((acc, i) => acc.concat(i), []);
+    logs.forEach(log => {
+        logListeners
+        .filter(listener => toAddress(listener.contract) === toAddress(log.address))
+        .forEach(listener => {
+            const data = utils.decodeLog(web3, log, [listener.abi]);
+            if (data) {
+                listener.cb(data.parameters as JsonObject);
+            }
+        });
+    });
+}
+
 export class Agent {
     private conn: Connector = new Connector();
     private actionOf: {[command: string]: (args: Json[]) => Promise<ActionResult>} = {};
@@ -67,24 +84,11 @@ export class Agent {
 
     constructor (
         private makeProvider: () => Provider,
+        confirmDepth: number,                           // 需要埋多深才算確認
     ) {
-        this.conn.onNewBlock(async block => {
-            const count = await this.web3.eth.getBlockTransactionCount(block.hash);
-            const idxs = r.range(0, count);
-            const txs = await Promise.all(idxs.map(i => this.web3.eth.getTransactionFromBlock(block.hash as any, i)));
-            const receipts = await Promise.all(txs.map(tx => this.web3.eth.getTransactionReceipt(tx.hash)));
-            const logs = receipts.map(r => r.logs || []).reduce((acc, i) => acc.concat(i), []);
-            logs.forEach(log => {
-                this.logListeners
-                .filter(listener => toAddress(listener.contract) === toAddress(log.address))
-                .forEach(listener => {
-                    const data = utils.decodeLog(this.web3, log, [listener.abi]);
-                    if (data) {
-                        listener.cb(data.parameters as JsonObject);
-                    }
-                });
-            });
-        });
+        const bs = new BlockStream(confirmDepth);
+        this.conn.onNewBlock(block => bs.inject(this.web3, block.number));
+        bs.onConfirmedBlock(block => processLog(this.web3, block, this.logListeners));
     }
 
     get web3 (): Web3 {
