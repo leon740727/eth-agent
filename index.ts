@@ -1,4 +1,6 @@
+import * as r from 'ramda';
 import Web3 = require('web3');
+import { Log, TransactionReceipt } from 'web3/types';
 import { Block } from 'web3/eth/types';
 import { ABIDefinition  } from 'web3/eth/abi';
 import { Provider } from 'web3/providers';
@@ -6,7 +8,7 @@ import http = require('http');
 import * as utils from 'eth-utils';
 import Connector from './connector';
 import BlockStream from './m/block-stream';
-import { EventListener } from './m/utils';
+import { EventListener, flatten } from './m/utils';
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
 
@@ -46,15 +48,33 @@ export type RegisterEventResult = {
     event: string,
 }
 
+/**
+ * Event 是包裝過的事件，是 client 有興趣監聽的
+ * 例如 agent 將一個 erc20.transferd 包裝成一個 paid 事件
+ * Event.id = LogEvent.id
+ * */
 export type Event = {
     event: string,
+    id: string,
     data: Json,
+}
+
+/**
+ * LogEvent 是鏈上原始的事件
+ * LogEvent.id = block + ',' + tx + ',' + log
+ * block = 發出這個 log 的 block number
+ * tx = 發出這個 log 的 tx 在 block 裡的位置
+ * log = 這個 log 在 tx 裡的位置
+ * */
+type LogEvent = {
+    id: string,
+    data: JsonObject,
 }
 
 type LogListener = {
     contract: string,
     abi: ABIDefinition,
-    cb: EventListener<JsonObject>,
+    cb: EventListener<LogEvent>,
 }
 
 function toAddress (address: string) {
@@ -62,16 +82,30 @@ function toAddress (address: string) {
 }
 
 async function processLog (web3: Web3, block: Block, logListeners: LogListener[]) {
+    function getLogs (receipt: TransactionReceipt, receiptIdx: number): [string, Log][] {
+        const logs = receipt.logs || [];
+        const logIdxs = r.range(0, logs.length);
+        return r.zip(logs, logIdxs)
+        .map(([log, logIdx]) => {
+            const logId = [block.number, receiptIdx, logIdx].join(',');
+            return [logId, log] as [string, Log];
+        });
+    }
     const receipts = await Promise.all(block.transactions.map(tx => web3.eth.getTransactionReceipt(tx.hash)));
-    const logs = receipts.map(r => r.logs || [])
-        .reduce((acc, i) => acc.concat(i), []);
-    logs.forEach(log => {
+    const rIdxs = r.range(0, receipts.length);
+    const logs = flatten(r.zip(receipts, rIdxs).map(([r, ridx]) => getLogs(r, ridx)));
+    logs.forEach(([lid, log]) => {
         logListeners
         .filter(listener => toAddress(listener.contract) === toAddress(log.address))
         .forEach(listener => {
             const data = utils.decodeLog(web3, log, [listener.abi]);
+            // todo: data 會是 null 嗎?
             if (data) {
-                listener.cb(data.parameters as JsonObject);
+                const logEvent: LogEvent = {
+                    id: lid,
+                    data: data.parameters as JsonObject,
+                };
+                listener.cb(logEvent);
             }
         });
     });
@@ -162,17 +196,19 @@ export class Agent {
     }
 
     /** 當 ethereum 節點收到某個合約的某個 event 時觸發 */
-    on (contract: string, abi: ABIDefinition, cb: EventListener<JsonObject>) {
+    on (contract: string, abi: ABIDefinition, cb: EventListener<LogEvent>) {
         this.logListeners.push({contract, abi, cb});
     }
 
     /** 向 connection 發出 (包裝過的) 事件 */
-    emit (event: string, data: Json): void {
-        (this.eventListenersOf[event] || [])
-        .forEach(connection => connection.sendUTF(JSON.stringify({
+    emit (event: string, logEvent: LogEvent, data: Json): void {
+        const e: Event = {
+            id: logEvent.id,
             event,
-            data: data,
-        } as Event)));
+            data,
+        };
+        (this.eventListenersOf[event] || [])
+        .forEach(connection => connection.sendUTF(JSON.stringify(e)));
     }
 
     setAction (command: string, handler: (args: Json[]) => Promise<ActionResult>) {
