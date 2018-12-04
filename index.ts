@@ -8,6 +8,7 @@ import http = require('http');
 import * as utils from 'eth-utils';
 import Connector from './connector';
 import BlockStream from './m/block-stream';
+import * as result from './m/result';
 import { EventListener, flatten } from './m/utils';
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
@@ -37,16 +38,6 @@ export type EventRequest = {
 }
 
 type Request = ActionRequest | EventRequest;
-
-export type ActionResult = {
-    error: string,
-    data: Json,
-}
-
-export type RegisterEventResult = {
-    error: string,
-    event: string,
-}
 
 /**
  * Event 是包裝過的事件，是 client 有興趣監聽的
@@ -113,7 +104,7 @@ async function processLog (web3: Web3, block: Block, logListeners: LogListener[]
 
 export class Agent {
     private conn: Connector = new Connector();
-    private actionOf: {[command: string]: (args: Json[]) => Promise<ActionResult>} = {};
+    private actionOf: {[command: string]: (args: Json[]) => Promise<result.Type<Json>>} = {};
     private logListeners: LogListener[] = [];
     private eventListenersOf: {[event: string]: WSConnection[]} = {};
 
@@ -128,6 +119,22 @@ export class Agent {
 
     get web3 (): Web3 {
         return this.conn.web3;
+    }
+
+    private async exec (req: ActionRequest): Promise<result.Type<Json>> {
+        const handler = this.actionOf[req.command];
+        if (handler) {
+            return handler(req.arguments)
+            .catch(error => result.ofError<Json>(error.toString()));
+        } else {
+            return result.ofError(`action '${req.command}' not found`);
+        }
+    }
+
+    private addEventListener (req: EventRequest, connection: WSConnection): result.Type<string> {
+        this.eventListenersOf[req.event] = (this.eventListenersOf[req.event] || [])
+        .concat([ connection ]);
+        return result.of(req.event);
     }
 
     serve (port: number, subprotocol: string) {
@@ -160,33 +167,17 @@ export class Agent {
             }
             
             var connection = request.accept(subprotocol, request.origin) as WSConnection;
-            connection.on('message', message => {
+            connection.on('message', async message => {
                 if (message.type !== 'utf8') {
                     connection.close(WebSocketConnection.CLOSE_REASON_PROTOCOL_ERROR);
                 } else {
                     const req = JSON.parse(message.utf8Data) as Request;
                     if (req.type === 'ActionRequest') {
-                        const handler = this.actionOf[req.command];
-                        if (handler) {
-                            handler(req.arguments)
-                            .then(result => connection.sendUTF(JSON.stringify(result)))
-                            .catch(error => connection.sendUTF(JSON.stringify({
-                                error: error.toString(),
-                                data: null,
-                            } as ActionResult)))
-                        } else {
-                            connection.sendUTF(JSON.stringify({
-                                error: `action '${req.command}' not found`,
-                                data: null,
-                            } as ActionResult));
-                        }
+                        const result = await this.exec(req);
+                        connection.sendUTF(JSON.stringify(result));
                     } else if (req.type === 'EventRequest') {
-                        this.eventListenersOf[req.event] = (this.eventListenersOf[req.event] || [])
-                        .concat([ connection ]);
-                        connection.sendUTF(JSON.stringify({
-                            error: null,
-                            event: req.event,
-                        } as RegisterEventResult));
+                        const result = this.addEventListener(req, connection);
+                        connection.sendUTF(JSON.stringify(result));
                     } else {
                         const _: never = req;
                     }
@@ -211,7 +202,7 @@ export class Agent {
         .forEach(connection => connection.sendUTF(JSON.stringify(e)));
     }
 
-    setAction (command: string, handler: (args: Json[]) => Promise<ActionResult>) {
+    setAction (command: string, handler: (args: Json[]) => Promise<result.Type<Json>>) {
         this.actionOf[command] = handler;
     }
 }
