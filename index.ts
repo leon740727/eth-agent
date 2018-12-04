@@ -32,12 +32,21 @@ export type ActionRequest = {
     arguments: Json[],
 }
 
-export type EventRequest = {
-    type: 'EventRequest',
-    event: string,
+// event 應該一起訂閱。因為 event 有重送機制。如果可以分開訂閱，想像下面的場景
+// 1. 鏈上現有 15 個 event。client 想訂閱 id 10 以後的 e1 及 e2 二種 event
+// 2. client 送出 e1 的訂閱申請 (從 10 開始)
+// 3. client 送出 e2 的訂閱申請 (從 10 開始)
+// 4. agent 收到 e1 的申請，將 e1.11, e1.15 二個事件送給 client
+// 5. agent 收到 e2 的申請，將 e2.12, e2.13 二個事件送給 client
+// 6. 斷線!! agent 來不及將 e2.14 送給 client
+// 現在 lastEventId 應該是 13 還是 15?
+export type EventsRequest = {
+    type: 'EventsRequest',
+    lastEventId: string,
+    events: string[],
 }
 
-type Request = ActionRequest | EventRequest;
+type Request = ActionRequest | EventsRequest;
 
 /**
  * Event 是包裝過的事件，是 client 有興趣監聽的
@@ -131,10 +140,11 @@ export class Agent {
         }
     }
 
-    private addEventListener (req: EventRequest, connection: WSConnection): result.Type<string> {
-        this.eventListenersOf[req.event] = (this.eventListenersOf[req.event] || [])
-        .concat([ connection ]);
-        return result.of(req.event);
+    private addEventListener (req: EventsRequest, connection: WSConnection): result.Type<string[]> {
+        req.events.forEach(event => {
+            this.eventListenersOf[event] = (this.eventListenersOf[event] || []).concat([connection]);
+        });
+        return result.of(req.events);
     }
 
     serve (port: number, subprotocol: string) {
@@ -175,7 +185,7 @@ export class Agent {
                     if (req.type === 'ActionRequest') {
                         const result = await this.exec(req);
                         connection.sendUTF(JSON.stringify(result));
-                    } else if (req.type === 'EventRequest') {
+                    } else if (req.type === 'EventsRequest') {
                         const result = this.addEventListener(req, connection);
                         connection.sendUTF(JSON.stringify(result));
                     } else {
