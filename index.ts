@@ -16,7 +16,8 @@ export type Json = Primitive | Primitive[] | {[field: string]: Json} | {[field: 
 
 export type JsonObject = {[field: string]: Json};
 
-type Connection = {
+/** WebSocket 的 connection */
+type WSConnection = {
     on (event: string, handler: EventListener<any>);
     sendUTF (data: string): void;
     close (reason);
@@ -80,7 +81,7 @@ export class Agent {
     private conn: Connector = new Connector();
     private actionOf: {[command: string]: (args: Json[]) => Promise<ActionResult>} = {};
     private logListeners: LogListener[] = [];
-    private eventListenersOf: {[event: string]: Connection[]} = {};
+    private eventListenersOf: {[event: string]: WSConnection[]} = {};
 
     constructor (
         private makeProvider: () => Provider,
@@ -124,7 +125,7 @@ export class Agent {
                 return;
             }
             
-            var connection = request.accept(subprotocol, request.origin) as Connection;
+            var connection = request.accept(subprotocol, request.origin) as WSConnection;
             connection.on('message', message => {
                 if (message.type !== 'utf8') {
                     connection.close(WebSocketConnection.CLOSE_REASON_PROTOCOL_ERROR);
