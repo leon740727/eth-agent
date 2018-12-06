@@ -51,30 +51,18 @@ type Request = ActionRequest | EventsRequest;
 /**
  * Event 是包裝過的事件，是 client 有興趣監聽的
  * 例如 agent 將一個 erc20.transferd 包裝成一個 paid 事件
- * Event.id = LogEvent.id
  * */
 export type Event = {
     event: string,
-    id: string,
+    block: number,
+    logIndex: number,
     data: Json,
-}
-
-/**
- * LogEvent 是鏈上原始的事件
- * LogEvent.id = block + ',' + tx + ',' + log
- * block = 發出這個 log 的 block number
- * tx = 發出這個 log 的 tx 在 block 裡的位置
- * log = 這個 log 在 tx 裡的位置
- * */
-type LogEvent = {
-    id: string,
-    data: JsonObject,
 }
 
 type LogListener = {
     contract: string,
     abi: ABIDefinition,
-    cb: EventListener<LogEvent>,
+    cb: EventListener<Log>,
 }
 
 function toAddress (address: string) {
@@ -99,13 +87,8 @@ async function processLog (web3: Web3, block: Block, logListeners: LogListener[]
         .filter(listener => toAddress(listener.contract) === toAddress(log.address))
         .forEach(listener => {
             const data = utils.decodeLog(web3, log, [listener.abi]);
-            // todo: data 會是 null 嗎?
             if (data) {
-                const logEvent: LogEvent = {
-                    id: lid,
-                    data: data.parameters as JsonObject,
-                };
-                listener.cb(logEvent);
+                listener.cb(log);
             }
         });
     });
@@ -197,14 +180,15 @@ export class Agent {
     }
 
     /** 當 ethereum 節點收到某個合約的某個 event 時觸發 */
-    on (contract: string, abi: ABIDefinition, cb: EventListener<LogEvent>) {
-        this.logListeners.push({contract, abi, cb});
+    on (contract: string, eventAbi: ABIDefinition, cb: EventListener<Log>) {
+        this.logListeners.push({contract, abi: eventAbi, cb});
     }
 
     /** 向 connection 發出 (包裝過的) 事件 */
-    emit (event: string, logEvent: LogEvent, data: Json): void {
+    emit (event: string, log: Log, data: Json): void {
         const e: Event = {
-            id: logEvent.id,
+            block: log.blockNumber,
+            logIndex: log.logIndex,
             event,
             data,
         };
