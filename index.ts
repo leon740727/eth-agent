@@ -53,16 +53,18 @@ type Request = ActionRequest | EventsRequest;
  * 例如 agent 將一個 erc20.transferd 包裝成一個 paid 事件
  * */
 export type Event = {
+    id: string,             // blockHash + logIndex
     event: string,
-    block: number,
-    logIndex: number,
     data: Json,
+    log: Log,
 }
+
+type Transformer = (log: Log, decodedData: JsonObject) => {event: string, data: Json}[];
 
 type LogTransformer = {
     contract: string,
     eventAbi: ABIDefinition,
-    transformer: (log: Log, decodedData: JsonObject) => Event[],
+    transformer: Transformer,
 }
 
 function toAddress (address: string) {
@@ -85,7 +87,13 @@ async function events (web3: Web3, block: Block, logTransformers: LogTransformer
             .filter(t => match(t, log))
             .map(t => {
                 const result = utils.decodeLog(web3, log, [t.eventAbi]);
-                return t.transformer(log, result.parameters as JsonObject);
+                const pieces = t.transformer(log, result.parameters as JsonObject);
+                return pieces.map(p => ({
+                    id: log.blockHash + ',' + log.logIndex,
+                    event: p.event,
+                    data: p.data,
+                    log: log,
+                }));
             }));
     }
     const receipts = await Promise.all(block.transactions.map(tx => web3.eth.getTransactionReceipt(tx.hash)));
@@ -185,7 +193,7 @@ export class Agent {
     }
 
     /** 將收到的 Log 轉成 Event 發出 */
-    on (contract: string, eventAbi: ABIDefinition, transformer: (log: Log, decodedData: JsonObject) => Event[]) {
+    on (contract: string, eventAbi: ABIDefinition, transformer: Transformer) {
         this.logTransformers.push({contract, eventAbi, transformer});
     }
 
