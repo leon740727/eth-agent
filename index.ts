@@ -1,6 +1,6 @@
 import * as r from 'ramda';
 import Web3 = require('web3');
-import { Log, TransactionReceipt } from 'web3/types';
+import { Log } from 'web3/types';
 import { Block } from 'web3/eth/types';
 import { ABIDefinition  } from 'web3/eth/abi';
 import { Provider } from 'web3/providers';
@@ -59,45 +59,44 @@ export type Event = {
     data: Json,
 }
 
-type LogListener = {
+type LogTransformer = {
     contract: string,
-    abi: ABIDefinition,
-    cb: EventListener<Log>,
+    eventAbi: ABIDefinition,
+    transformer: (log: Log, decodedData: JsonObject) => Event[],
 }
 
 function toAddress (address: string) {
     return address.slice(-40).toLowerCase();
 }
 
-async function processLog (web3: Web3, block: Block, logListeners: LogListener[]) {
-    function getLogs (receipt: TransactionReceipt, receiptIdx: number): [string, Log][] {
-        const logs = receipt.logs || [];
-        const logIdxs = r.range(0, logs.length);
-        return r.zip(logs, logIdxs)
-        .map(([log, logIdx]) => {
-            const logId = [block.number, receiptIdx, logIdx].join(',');
-            return [logId, log] as [string, Log];
-        });
+async function events (web3: Web3, block: Block, logTransformers: LogTransformer[]): Promise<Event[]> {
+    function match (transformer: LogTransformer, log: Log) {
+        function eventSig1 (log: Log) {
+            return log.topics ? log.topics[0] : null;
+        }
+        const eventSig2 = (abi: ABIDefinition) => {
+            return web3.eth.abi.encodeEventSignature(r.pick(['name','type','inputs'], abi));
+        }
+        return toAddress(transformer.contract) === toAddress(log.address) &&
+               eventSig2(transformer.eventAbi) === eventSig1(log)
+    }
+    function events (log: Log): Event[] {
+        return flatten(logTransformers
+            .filter(t => match(t, log))
+            .map(t => {
+                const result = utils.decodeLog(web3, log, [t.eventAbi]);
+                return t.transformer(log, result.parameters as JsonObject);
+            }));
     }
     const receipts = await Promise.all(block.transactions.map(tx => web3.eth.getTransactionReceipt(tx.hash)));
-    const rIdxs = r.range(0, receipts.length);
-    const logs = flatten(r.zip(receipts, rIdxs).map(([r, ridx]) => getLogs(r, ridx)));
-    logs.forEach(([lid, log]) => {
-        logListeners
-        .filter(listener => toAddress(listener.contract) === toAddress(log.address))
-        .forEach(listener => {
-            const data = utils.decodeLog(web3, log, [listener.abi]);
-            if (data) {
-                listener.cb(log);
-            }
-        });
-    });
+    const logs = flatten(receipts.map(r => r.logs || []));
+    return flatten(logs.map(events));
 }
 
 export class Agent {
     private conn: Connector = new Connector();
     private actionOf: {[command: string]: (args: Json[]) => Promise<result.Type<Json>>} = {};
-    private logListeners: LogListener[] = [];
+    private logTransformers: LogTransformer[] = [];
     private eventListenersOf: {[event: string]: WSConnection[]} = {};
 
     constructor (
@@ -106,7 +105,13 @@ export class Agent {
     ) {
         const bs = new BlockStream(confirmDepth);
         this.conn.onNewBlock(block => bs.inject(this.web3, block.number));
-        bs.onConfirmedBlock(block => processLog(this.web3, block, this.logListeners));
+        bs.onConfirmedBlock(async block => {
+            (await events(this.web3, block, this.logTransformers))
+            .forEach(event => {
+                (this.eventListenersOf[event.event] || [])
+                .forEach(conn => conn.sendUTF(JSON.stringify(event)));
+            });
+        });
     }
 
     get web3 (): Web3 {
@@ -179,21 +184,9 @@ export class Agent {
         });
     }
 
-    /** 當 ethereum 節點收到某個合約的某個 event 時觸發 */
-    on (contract: string, eventAbi: ABIDefinition, cb: EventListener<Log>) {
-        this.logListeners.push({contract, abi: eventAbi, cb});
-    }
-
-    /** 向 connection 發出 (包裝過的) 事件 */
-    emit (event: string, log: Log, data: Json): void {
-        const e: Event = {
-            block: log.blockNumber,
-            logIndex: log.logIndex,
-            event,
-            data,
-        };
-        (this.eventListenersOf[event] || [])
-        .forEach(connection => connection.sendUTF(JSON.stringify(e)));
+    /** 將收到的 Log 轉成 Event 發出 */
+    on (contract: string, eventAbi: ABIDefinition, transformer: (log: Log, decodedData: JsonObject) => Event[]) {
+        this.logTransformers.push({contract, eventAbi, transformer});
     }
 
     setAction (command: string, handler: (args: Json[]) => Promise<result.Type<Json>>) {
