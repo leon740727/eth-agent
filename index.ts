@@ -96,7 +96,7 @@ async function events (web3: Web3, block: Block, logTransformers: LogTransformer
                 }));
             }));
     }
-    const receipts = await Promise.all(block.transactions.map(tx => web3.eth.getTransactionReceipt(tx.hash)));
+    const receipts = await Promise.all((block.transactions as any as string[]).map(tx => web3.eth.getTransactionReceipt(tx)));
     const logs = flatten(receipts.map(r => r.logs || []));
     return flatten(logs.map(events));
 }

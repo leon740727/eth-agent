@@ -31,7 +31,9 @@ export default class {
     private publish (confirmedBlocks: Block[]) {
         // inject 到 publish 的過程是非同步的。中間 head 的狀態可能被改變
         // 所以在真正修改 head 前要篩選一遍
-        confirmedBlocks = confirmedBlocks.filter(b => b.number > this.head.number);
+        if (this.head) {
+            confirmedBlocks = confirmedBlocks.filter(b => b.number > this.head.number);
+        }
         if (confirmedBlocks.length > 0) {
             this.head = r.last(confirmedBlocks);
             confirmedBlocks.map(b => this.listeners.forEach(l => l(b)));
