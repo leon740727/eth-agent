@@ -12,6 +12,7 @@ import BlockStream from './m/block-stream';
 import { NonceAgent, RawTx, Tx } from './m/nonce-agent';
 import EventStream from './m/event-stream';
 import * as result from './m/result';
+import Hex from './m/hex';
 import { EventListener, flatten } from './m/utils';
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
@@ -70,10 +71,6 @@ type LogTransformer = {
     transformer: Transformer,
 }
 
-function toAddress (address: string) {
-    return address.slice(-40).toLowerCase();
-}
-
 async function events (web3: Web3, block: Block, logTransformers: LogTransformer[]): Promise<Event[]> {
     function match (transformer: LogTransformer, log: Log) {
         function eventSig1 (log: Log) {
@@ -82,7 +79,7 @@ async function events (web3: Web3, block: Block, logTransformers: LogTransformer
         const eventSig2 = (abi: ABIDefinition) => {
             return web3.eth.abi.encodeEventSignature(r.pick(['name','type','inputs'], abi));
         }
-        return toAddress(transformer.contract) === toAddress(log.address) &&
+        return Hex.formalize(transformer.contract) === Hex.formalize(log.address) &&
                eventSig2(transformer.eventAbi) === eventSig1(log)
     }
     function events (log: Log): Event[] {
@@ -107,7 +104,7 @@ async function events (web3: Web3, block: Block, logTransformers: LogTransformer
 export class Agent {
     private conn: Connector = new Connector();
     private nonceAgentOf: {[sender: string]: NonceAgent} = {};
-    private receiptStream: EventStream<TransactionReceipt> = new EventStream(receipt => receipt.transactionHash.replace(/^0x/, ''));
+    private receiptStream: EventStream<TransactionReceipt> = new EventStream(receipt => Hex.formalize(receipt.transactionHash));
     private actionOf: {[command: string]: (args: Json[]) => Promise<result.Type<Json>>} = {};
     private logTransformers: LogTransformer[] = [];
     private eventListenersOf: {[event: string]: WSConnection[]} = {};
@@ -119,7 +116,7 @@ export class Agent {
         confirmDepth: number,                           // 需要埋多深才算確認
     ) {
         keys.forEach(key => {
-            const sender = toAddress(ethUtils.privateToAddress(key).toString('hex'));
+            const sender = Hex.formalize(ethUtils.privateToAddress(key).toString('hex'));
             this.nonceAgentOf[sender] = new NonceAgent(this.web3, key);
         });
 
@@ -211,7 +208,7 @@ export class Agent {
 
     /** helper */
     async send (sender: string, rawTx: RawTx): Promise<TransactionReceipt> {
-        const tx = await this.nonceAgentOf[toAddress(sender)].send(rawTx);
+        const tx = await this.nonceAgentOf[Hex.formalize(sender)].send(rawTx);
         return this.receiptStream.waitFor(this.txHasher(tx));
     }
 
