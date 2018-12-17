@@ -1,6 +1,7 @@
 index.js
 connector.js
 m/**/*.js
+test/**/*.js
 example/*.js
 
 node_modules

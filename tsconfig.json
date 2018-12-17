@@ -9,6 +9,7 @@
         "index.ts",
         "example/agent.ts",
         "example/client.ts",
+        "test/nonce-agent.ts",
     ],
     "include": [
         "m/@type/ethereumjs-util.d.ts",

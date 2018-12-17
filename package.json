@@ -11,6 +11,8 @@
   "devDependencies": {
     "@types/ramda": "^0.25.42",
     "@types/web3": "^1.0.12",
+    "chai": "^4.2.0",
+    "sinon": "^7.2.2",
     "truffle": "^4.1.14",
     "typescript": "^3.1.6"
   },
