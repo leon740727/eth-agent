@@ -1,13 +1,16 @@
 import * as r from 'ramda';
 import Web3 = require('web3');
-import { Log } from 'web3/types';
+import { Log, TransactionReceipt } from 'web3/types';
 import { Block } from 'web3/eth/types';
 import { ABIDefinition  } from 'web3/eth/abi';
 import { Provider } from 'web3/providers';
 import http = require('http');
 import * as utils from 'eth-utils';
+import * as ethUtils from 'ethereumjs-util';
 import Connector from './connector';
 import BlockStream from './m/block-stream';
+import { NonceAgent, RawTx, Tx } from './m/nonce-agent';
+import EventStream from './m/event-stream';
 import * as result from './m/result';
 import { EventListener, flatten } from './m/utils';
 const WebSocketServer = require('websocket').server;
@@ -103,14 +106,23 @@ async function events (web3: Web3, block: Block, logTransformers: LogTransformer
 
 export class Agent {
     private conn: Connector = new Connector();
+    private nonceAgentOf: {[sender: string]: NonceAgent} = {};
+    private receiptStream: EventStream<TransactionReceipt> = new EventStream(receipt => receipt.transactionHash.replace(/^0x/, ''));
     private actionOf: {[command: string]: (args: Json[]) => Promise<result.Type<Json>>} = {};
     private logTransformers: LogTransformer[] = [];
     private eventListenersOf: {[event: string]: WSConnection[]} = {};
 
     constructor (
         private makeProvider: () => Provider,
+        private txHasher: (tx: Tx) => string,
+        keys: Buffer[],
         confirmDepth: number,                           // 需要埋多深才算確認
     ) {
+        keys.forEach(key => {
+            const sender = toAddress(ethUtils.privateToAddress(key).toString('hex'));
+            this.nonceAgentOf[sender] = new NonceAgent(this.web3, key);
+        });
+
         const bs = new BlockStream(confirmDepth);
         this.conn.onNewBlock(block => bs.inject(this.web3, block.number));
         bs.onConfirmedBlock(async block => {
@@ -119,6 +131,11 @@ export class Agent {
                 (this.eventListenersOf[event.event] || [])
                 .forEach(conn => conn.sendUTF(JSON.stringify(event)));
             });
+        });
+
+        bs.onConfirmedBlock(async block => {
+            const receipts = await Promise.all((block.transactions as any as string[]).map(tx => this.web3.eth.getTransactionReceipt(tx)));
+            receipts.forEach(r => this.receiptStream.trigger(r));
         });
     }
 
@@ -190,6 +207,12 @@ export class Agent {
                 }
             });
         });
+    }
+
+    /** helper */
+    async send (sender: string, rawTx: RawTx): Promise<TransactionReceipt> {
+        const tx = await this.nonceAgentOf[toAddress(sender)].send(rawTx);
+        return this.receiptStream.waitFor(this.txHasher(tx));
     }
 
     /** 將收到的 Log 轉成 Event 發出 */
