@@ -17,6 +17,14 @@ import { EventListener, flatten } from './m/utils';
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
 
+export { RawTx } from './m/nonce-agent';
+
+export namespace Result {
+    export type Type <T> = result.Type <T>;
+    export const of: <T> (data: T) => Type<T> = result.of;
+    export const ofError: <T> (error: string) => Type<T> = result.ofError;
+}
+
 type Primitive = string | number | boolean;
 
 export type Json = Primitive | Primitive[] | {[field: string]: Json} | {[field: string]: Json}[];
@@ -46,7 +54,7 @@ export type ActionRequest = {
 // 現在 lastEventId 應該是 13 還是 15?
 export type EventsRequest = {
     type: 'EventsRequest',
-    lastEventId: string,
+    lastEventId: string,                    // could be null
     events: string[],
 }
 

@@ -1,7 +1,9 @@
-const W3CWebSocket = require('websocket').w3cwebsocket;
-import { ActionRequest, EventRequest, ActionResult, RegisterEventResult, Event, Json } from '../index';
+import { w3cwebsocket as W3CWebSocket } from 'websocket';
+import { ActionRequest, EventsRequest, Result, Event, Json } from '../index';
+import { EventListener } from '../m/utils';
+import EventStream from '../m/event-stream';
 
-function _connect (url: string, subprotocol: string): Promise<any> {
+function connect (url: string, subprotocol: string): Promise<W3CWebSocket> {
     var conn = new W3CWebSocket(url, subprotocol);
     conn.onerror = () => {
         throw new Error('w3cwebsocket error');
@@ -13,30 +15,16 @@ function _connect (url: string, subprotocol: string): Promise<any> {
     });
 }
 
-function isRegisterEventResult (data): boolean {
-    return data.error !== undefined;
-}
-
 class EventConnection {
-    private conn;
-    private handlerOf: {[event: string]: (data: Json) => void} = {};
+    private conn: W3CWebSocket;
+    private handlerOf: {[event: string]: (event: Event) => void} = {};
+    private eventStream = new EventStream<Json>(e => 'm');
 
     connect (url: string): Promise<void> {
-        return _connect(url, '')
+        return connect(url, '')
         .then(conn => {
             this.conn = conn;
-            this.conn.onmessage = e => {
-                const result = JSON.parse(e.data);
-                if (isRegisterEventResult(result)) {
-                    const res = result as RegisterEventResult;
-                    if (res.error) {
-                        throw new Error(`register ${res.event} event fail: ${res.error}`);
-                    }
-                } else {
-                    const res = result as Event;
-                    this.handlerOf[res.event](res.data);
-                }
-            }
+            this.conn.onmessage = e => this.eventStream.trigger(JSON.parse(e.data));
         });
     }
 
@@ -44,18 +32,22 @@ class EventConnection {
         this.conn.close();
     }
 
-    on (event: string, handler: (data: Json) => void) {
-        this.handlerOf[event] = handler;
-        const req: EventRequest = {
-            type: 'EventRequest',
-            event,
+    async setListeners (listeners: {event: string, handler: EventListener<Event>}[]): Promise<Result.Type<string[]>> {
+        listeners.forEach(l => this.handlerOf[l.event] = l.handler);
+        const req: EventsRequest = {
+            type: 'EventsRequest',
+            events: listeners.map(l => l.event),
+            lastEventId: null,
         }
         this.conn.send(JSON.stringify(req));
+        const res = await this.eventStream.waitFor('m') as Result.Type<string[]>;
+        this.eventStream.on('m', e => this.handlerOf[(e as any as Event).event](e as any))
+        return res;
     }
 }
 
-function exec (command: string, args: Json[]): Promise<ActionResult> {
-    return _connect(agentUrl, '')
+function exec (command: string, args: Json[]): Promise<Result.Type<Json>> {
+    return connect(agentUrl, '')
     .then(conn => {
         const req: ActionRequest = {
             type: 'ActionRequest',
@@ -63,9 +55,9 @@ function exec (command: string, args: Json[]): Promise<ActionResult> {
             arguments: args,
         }
         conn.send(JSON.stringify(req));
-        return new Promise<ActionResult>((resolve, reject) => {
+        return new Promise<Result.Type<Json>>((resolve, reject) => {
             conn.onmessage = e => {
-                const result = JSON.parse(e.data) as ActionResult;
+                const result = JSON.parse(e.data) as Result.Type<Json>;
                 conn.close();
                 resolve(result);
             }
@@ -77,9 +69,9 @@ function exec (command: string, args: Json[]): Promise<ActionResult> {
 const agentUrl = 'ws://localhost:8080/';
 const ec = new EventConnection();
 ec.connect(agentUrl)
-.then(_ => ec.on('add', (value: number) => {
-    console.log(`add`, value);
-    ec.close();
-}));
+.then(_ => {
+    ec.setListeners([{event: 'add', handler: e => console.log(`event: `, e)}])
+    .then(res => console.log(`setListeners: `, res));
+});
 
-exec('add', [27]).then(result => console.log('result:', result));
+exec('add', [27]).then(result => console.log(`exec: `, result));

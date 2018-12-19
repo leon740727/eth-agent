@@ -1,3 +1,6 @@
+import * as r from 'ramda';
+import * as FakeTx from 'ethereumjs-tx/fake';
+
 export type EventListener <T> = (event: T) => void;
 
 export function flatten <T> (itemsList: T[][]): T[] {
@@ -24,4 +27,9 @@ export function hour2time (hour: number) {
 
 export function day2time (day: number) {
     return hour2time(day * 24);
+}
+
+export function fakeTxHasher (tx): string {
+    const data = r.pick(['to', 'data', 'value', 'nonce', 'gasPrice', 'gasLimit'], tx);
+    return new FakeTx(data).hash(true).toString('hex');
 }
