@@ -95,8 +95,12 @@ export class NonceAgent {
             return this.web3.eth.sendSignedTransaction(`0x${tx.serialize().toString('hex')}`)
             .then(_ => tx)
             .catch((error: Error) => {
-                console.log(error.message);
-                return tryNonce(rawTx);
+                // the tx doesn't have the correct nonce. account has nonce of: 50 tx has nonce of: 49
+                if (error.message.match(/nonce/)) {     // nonce 錯誤
+                    return tryNonce(rawTx);
+                } else {
+                    return tx;
+                }
             });
         }
         if (this.nonce === null) {
