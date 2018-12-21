@@ -105,7 +105,7 @@ export class NonceAgent {
         }
         if (this.nonce === null) {
             const tx = await tryNonce(rawTx);
-            this.nonce = parseInt(tx.nonce.toString('hex'), 16) + 1;
+            this.nonce = (tx.nonce.length === 0 ? 0 : parseInt(tx.nonce.toString('hex'), 16)) + 1;
             return tx;
         } else {
             const tx = await sign(rawTx, this.nonce, this.key);
