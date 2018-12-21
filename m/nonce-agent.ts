@@ -110,7 +110,9 @@ export class NonceAgent {
         } else {
             const tx = await sign(rawTx, this.nonce, this.key);
             this.nonce += 1;
-            this.web3.eth.sendSignedTransaction(`0x${tx.serialize().toString('hex')}`); // 不需 await
+            // 不需 await
+            this.web3.eth.sendSignedTransaction(`0x${tx.serialize().toString('hex')}`)
+            .catch(_ => _);
             return tx;
         }
     }
