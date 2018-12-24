@@ -1,9 +1,8 @@
 import * as r from 'ramda';
 import { expect } from 'chai';
 import Web3 = require('web3');
-import { BigNumber } from 'bignumber.js';
-import EthTx = require("ethereumjs-tx");
 import * as sinon from 'sinon';
+import * as eth from 'eth-utils';
 import * as utils from '../m/utils';
 import { NonceAgent, RawTx, Tx } from '../m/nonce-agent';
 
@@ -19,12 +18,6 @@ function replaceOnce (object, property, func) {
     });
 }
 
-function sign (rawTx: RawTx, nonce: number, key: Buffer): Promise<Tx> {
-    const tx = new EthTx(r.merge({ nonce }, rawTx)) as any as Tx;
-    tx.sign(key);
-    return Promise.resolve(tx);
-}
-
 describe('nonce agent', () => {
     const web3 = new Web3(web3Provider);
 
@@ -34,21 +27,20 @@ describe('nonce agent', () => {
     ];
     const leonKey = Buffer.from('c87509a1c067bbde78beb793e6fa76530b6382a4c0241e5e4a9ec0a0f44dc0d3', 'hex');
 
-    function makeTx (value: number) {
+    function makeTx (value: number): RawTx {
         return {
             to: iris,
-            data: '',
-            value: '0x' + new BigNumber(value).toString(16),
-            gasPrice: '0x' + new BigNumber(0).toString(16),
-            gasLimit: '0x' + new BigNumber(6000000).toString(16),
+            value: value,
+            gasPrice: 0,
+            gasLimit: 6000000,
         };
     }
 
     it('', async () => {
         // 準備一筆資料，確定 nonce 不為 0
         const nonce = await web3.eth.getTransactionCount(leon);
-        const tx = await sign(makeTx(nonce), nonce, leonKey);
-        await web3.eth.sendSignedTransaction(`0x${tx.serialize().toString('hex')}`);
+        const tx = eth.sign(leonKey, r.assoc('nonce', nonce, makeTx(nonce)));
+        await web3.eth.sendSignedTransaction(eth.serialize(tx));
         
         const nonces = r.range(nonce+1, nonce+3);
         const txs = nonces.map(n => makeTx(n));
@@ -64,9 +56,9 @@ describe('nonce agent', () => {
 
         const agent = new NonceAgent(web3, leonKey);
         return new Promise((resolve, reject) => {
-            const results = [];
+            const results: Tx[] = [];
             agent.onTx((jid, tx) => {
-                results.push(r.fromPairs(r.zip(tx._fields, tx.toJSON())));
+                results.push(tx);
                 if (results.length === txs.length) {
                     results.forEach(r => {
                         expect(r.nonce).eql(r.value);

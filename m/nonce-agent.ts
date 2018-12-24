@@ -1,7 +1,8 @@
 import * as r from 'ramda';
 import Web3 = require('web3');
+import { Tx } from 'eth-utils';
+import * as eth from 'eth-utils';
 import * as ethUtils from 'ethereumjs-util';
-import EthTx = require("ethereumjs-tx");
 import uuidv1 = require('uuid/v1');
 import * as utils from './utils';
 import EventStream from './event-stream';
@@ -10,24 +11,20 @@ import EventStream from './event-stream';
 /** todo: 重啟會有交易遺失 => 日後手動處理 */
 /** todo: 優雅的退出 */
 
-type Listener <T> = (id: string, data: T) => void;
+type Num = string | number;
 
+/** 沒有 nonce 也沒有簽名的 tx */
 export type RawTx = {
-    to: string,
-    data: string,
-    value: string,
-    gasPrice: string,
-    gasLimit: string,
-}
+    gasPrice?: Num;
+    gasLimit?: Num;
+    to?: string;
+    value?: Num;
+    data?: string;
+};
 
-export interface Tx extends RawTx {
-    nonce: Buffer,
-    _fields: string[],
-    sign (key: Buffer): void,
-    hash (includeSignature: boolean): Buffer,
-    serialize (): Buffer,
-    toJSON (): string[],
-}
+export { Tx } from 'eth-utils';
+
+type Listener <T> = (id: string, data: T) => void;
 
 class JobQueue <T> {
     private jobs: Promise<void> = Promise.resolve(null);
@@ -41,12 +38,6 @@ class JobQueue <T> {
 type Event <T> = {
     id: string,
     data: T,
-}
-
-function sign (rawTx: RawTx, nonce: number, key: Buffer): Promise<Tx> {
-    const tx = new EthTx(r.merge({ nonce }, rawTx)) as any as Tx;
-    tx.sign(key);
-    return Promise.resolve(tx);
 }
 
 export class NonceAgent {
@@ -91,8 +82,8 @@ export class NonceAgent {
             await utils.wait(5);              // 預防分叉
             const addr = '0x' + ethUtils.privateToAddress(this.key).toString('hex');
             const nonce = await this.web3.eth.getTransactionCount(addr);
-            const tx = await sign(rawTx, nonce, this.key);
-            return this.web3.eth.sendSignedTransaction(`0x${tx.serialize().toString('hex')}`)
+            const tx = eth.sign(this.key, r.assoc('nonce', nonce, rawTx));
+            return this.web3.eth.sendSignedTransaction(eth.serialize(tx))
             .then(_ => tx)
             .catch((error: Error) => {
                 // the tx doesn't have the correct nonce. account has nonce of: 50 tx has nonce of: 49
@@ -105,13 +96,13 @@ export class NonceAgent {
         }
         if (this.nonce === null) {
             const tx = await tryNonce(rawTx);
-            this.nonce = (tx.nonce.length === 0 ? 0 : parseInt(tx.nonce.toString('hex'), 16)) + 1;
+            this.nonce = (typeof tx.nonce === 'number' ? tx.nonce : parseInt(tx.nonce)) + 1;
             return tx;
         } else {
-            const tx = await sign(rawTx, this.nonce, this.key);
+            const tx = eth.sign(this.key, r.assoc('nonce', this.nonce, rawTx));
             this.nonce += 1;
             // 不需 await
-            this.web3.eth.sendSignedTransaction(`0x${tx.serialize().toString('hex')}`)
+            this.web3.eth.sendSignedTransaction(eth.serialize(tx))
             .catch(_ => _);
             return tx;
         }
