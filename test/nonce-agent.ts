@@ -13,8 +13,8 @@ const web3Provider = 'http://localhost:9545';
 function replaceOnce (object, property, func) {
     const ori = object[property];
     sinon.replace(object, property, (...args) => {
-        func.apply(null, args);
         object[property] = ori;
+        return func.apply(null, args);
     });
 }
 
