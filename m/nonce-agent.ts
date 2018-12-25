@@ -15,8 +15,8 @@ type Num = string | number;
 
 /** 沒有 nonce 也沒有簽名的 tx */
 export type RawTx = {
-    gasPrice?: Num;
-    gasLimit?: Num;
+    gasPrice: Num;
+    gasLimit: Num;
     to?: string;
     value?: Num;
     data?: string;
