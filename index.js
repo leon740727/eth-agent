@@ -156,7 +156,7 @@ class Agent {
     send(sender, rawTx) {
         return __awaiter(this, void 0, void 0, function* () {
             const tx = yield this.nonceAgentOf[eth.fmt.hex(sender)].send(rawTx);
-            return this.receiptStream.waitFor(this.txHasher(tx));
+            return this.receiptStream.waitFor(eth.fmt.hex(this.txHasher(tx)));
         });
     }
     /** 將收到的 Log 轉成 Event 發出 */
