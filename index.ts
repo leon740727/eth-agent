@@ -157,11 +157,16 @@ export class Agent {
         }
     }
 
-    private addEventListener (events: string[], connection: WSConnection): result.Type<string[]> {
-        events.forEach(event => {
+    private setEventListener (req: EventsRequest, connection: WSConnection): result.Type<string[]> {
+        // 清除原本註冊的資料
+        this.eventListenersOf = r.mapObjIndexed(
+            (conns, event) => conns.filter(conn => conn !== connection),
+            this.eventListenersOf);
+        
+        req.events.forEach(event => {
             this.eventListenersOf[event] = (this.eventListenersOf[event] || []).concat([connection]);
         });
-        return result.of(events);
+        return result.of(req.events);
     }
 
     serve (port: number, subprotocol: string) {
@@ -203,7 +208,7 @@ export class Agent {
                         const result = await this.exec(req);
                         connection.sendUTF(JSON.stringify(result));
                     } else if (req.type === 'EventsRequest') {
-                        const result = this.addEventListener(req.events, connection);
+                        const result = this.setEventListener(req, connection);
                         connection.sendUTF(JSON.stringify(result));
                     } else {
                         const _: never = req;
