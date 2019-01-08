@@ -157,11 +157,11 @@ export class Agent {
         }
     }
 
-    private addEventListener (req: EventsRequest, connection: WSConnection): result.Type<string[]> {
-        req.events.forEach(event => {
+    private addEventListener (events: string[], connection: WSConnection): result.Type<string[]> {
+        events.forEach(event => {
             this.eventListenersOf[event] = (this.eventListenersOf[event] || []).concat([connection]);
         });
-        return result.of(req.events);
+        return result.of(events);
     }
 
     serve (port: number, subprotocol: string) {
@@ -203,7 +203,7 @@ export class Agent {
                         const result = await this.exec(req);
                         connection.sendUTF(JSON.stringify(result));
                     } else if (req.type === 'EventsRequest') {
-                        const result = this.addEventListener(req, connection);
+                        const result = this.addEventListener(req.events, connection);
                         connection.sendUTF(JSON.stringify(result));
                     } else {
                         const _: never = req;

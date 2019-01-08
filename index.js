@@ -99,11 +99,11 @@ class Agent {
             }
         });
     }
-    addEventListener(req, connection) {
-        req.events.forEach(event => {
+    addEventListener(events, connection) {
+        events.forEach(event => {
             this.eventListenersOf[event] = (this.eventListenersOf[event] || []).concat([connection]);
         });
-        return result.of(req.events);
+        return result.of(events);
     }
     serve(port, subprotocol) {
         this.conn.connect(this.makeProvider);
@@ -142,7 +142,7 @@ class Agent {
                         connection.sendUTF(JSON.stringify(result));
                     }
                     else if (req.type === 'EventsRequest') {
-                        const result = this.addEventListener(req, connection);
+                        const result = this.addEventListener(req.events, connection);
                         connection.sendUTF(JSON.stringify(result));
                     }
                     else {
