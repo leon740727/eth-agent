@@ -41,7 +41,7 @@ agent.setAction('nonce', async ([address]: [string]) => {
     }
 });
 
-agent.on(
+agent.setLogTransformer(
     testAddr,
     testResource.abi.filter(abi => abi.type === 'event' && abi.name === 'Add')[0],
     (log, data) => [{event: 'add', data: data.value}]);

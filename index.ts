@@ -219,8 +219,8 @@ export class Agent {
         return this.receiptStream.waitFor(eth.fmt.hex(this.txHasher(tx)));
     }
 
-    /** 將收到的 Log 轉成 Event 發出 */
-    on (contract: string, eventAbi: ABIDefinition, transformer: Transformer) {
+    /** 將收到的 Log 轉成 Event */
+    setLogTransformer (contract: string, eventAbi: ABIDefinition, transformer: Transformer) {
         this.logTransformers.push({contract, eventAbi, transformer});
     }
 
