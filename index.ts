@@ -70,6 +70,14 @@ export type Event = {
     log: Log,
 }
 
+const EventId = {
+    make: (block: string, logIndex: number) => block + ',' + logIndex,
+    resolve: (id: string): [string, number] => {
+        const [block, logIndex] = id.split(',');
+        return [block, parseInt(logIndex)];
+    }
+}
+
 type Transformer = (log: Log, decodedData: JsonObject) => {event: string, data: Json}[];
 
 type LogTransformer = {
@@ -78,7 +86,16 @@ type LogTransformer = {
     transformer: Transformer,
 }
 
-async function events (web3: Web3, block: Block, logTransformers: LogTransformer[]): Promise<Event[]> {
+function receipts (web3: Web3, block: Block) {
+    const txs = block.transactions as any as string[];
+    return Promise.all(txs.map(tx => web3.eth.getTransactionReceipt(tx)));
+}
+
+async function logs (web3: Web3, block: Block): Promise<Log[]> {
+    return flatten((await receipts(web3, block)).map(r => r.logs));
+}
+
+function events (web3: Web3, log: Log, logTransformers: LogTransformer[]): Event[] {
     function match (transformer: LogTransformer, log: Log) {
         function eventSig1 (log: Log) {
             return log.topics ? log.topics[0] : null;
@@ -89,23 +106,19 @@ async function events (web3: Web3, block: Block, logTransformers: LogTransformer
         return eth.fmt.hex(transformer.contract) === eth.fmt.hex(log.address) &&
                eventSig2(transformer.eventAbi) === eventSig1(log)
     }
-    function events (log: Log): Event[] {
-        return flatten(logTransformers
-            .filter(t => match(t, log))
-            .map(t => {
-                const result = eth.decodeLog(web3, log, [t.eventAbi]);
-                const pieces = t.transformer(log, result.parameters as JsonObject);
-                return pieces.map(p => ({
-                    id: log.blockHash + ',' + log.logIndex,
-                    event: p.event,
-                    data: p.data,
-                    log: log,
-                }));
-            }));
-    }
-    const receipts = await Promise.all((block.transactions as any as string[]).map(tx => web3.eth.getTransactionReceipt(tx)));
-    const logs = flatten(receipts.map(r => r.logs || []));
-    return flatten(logs.map(events));
+    return logTransformers
+    .filter(t => match(t, log))
+    .map(t => {
+        const result = eth.decodeLog(web3, log, [t.eventAbi]);
+        const pieces = t.transformer(log, result.parameters as JsonObject);
+        return pieces.map(p => ({
+            id: EventId.make(log.blockHash, log.logIndex),
+            event: p.event,
+            data: p.data,
+            log: log,
+        }))
+    })
+    .reduce((acc, lst) => acc.concat(lst), []);
 }
 
 export class Agent {
@@ -130,21 +143,24 @@ export class Agent {
         const bs = new BlockStream(confirmDepth);
         this.conn.onNewBlock(block => bs.inject(this.web3, block.number));
         bs.onConfirmedBlock(async block => {
-            (await events(this.web3, block, this.logTransformers))
-            .forEach(event => {
-                (this.eventListenersOf[event.event] || [])
-                .forEach(conn => conn.sendUTF(JSON.stringify(event)));
-            });
+            (await logs(this.web3, block))
+            .map(log => events(this.web3, log, this.logTransformers))
+            .reduce((acc, lst) => acc.concat(lst), [])
+            .forEach(event => this.emit(event));
         });
 
         bs.onConfirmedBlock(async block => {
-            const receipts = await Promise.all((block.transactions as any as string[]).map(tx => this.web3.eth.getTransactionReceipt(tx)));
-            receipts.forEach(r => this.receiptStream.trigger(r));
+            (await receipts(this.web3, block)).forEach(r => this.receiptStream.trigger(r));
         });
     }
 
     get web3 (): Web3 {
         return this.conn.web3;
+    }
+
+    private emit (event: Event) {
+        (this.eventListenersOf[event.event] || [])
+        .forEach(conn => conn.sendUTF(JSON.stringify(event)));
     }
 
     private async exec (req: ActionRequest): Promise<result.Type<Json>> {

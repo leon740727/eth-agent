@@ -25,36 +25,46 @@ var Result;
     Result.of = result.of;
     Result.ofError = result.ofError;
 })(Result = exports.Result || (exports.Result = {}));
-function events(web3, block, logTransformers) {
+const EventId = {
+    make: (block, logIndex) => block + ',' + logIndex,
+    resolve: (id) => {
+        const [block, logIndex] = id.split(',');
+        return [block, parseInt(logIndex)];
+    }
+};
+function receipts(web3, block) {
+    const txs = block.transactions;
+    return Promise.all(txs.map(tx => web3.eth.getTransactionReceipt(tx)));
+}
+function logs(web3, block) {
     return __awaiter(this, void 0, void 0, function* () {
-        function match(transformer, log) {
-            function eventSig1(log) {
-                return log.topics ? log.topics[0] : null;
-            }
-            const eventSig2 = (abi) => {
-                return web3.eth.abi.encodeEventSignature(r.pick(['name', 'type', 'inputs'], abi));
-            };
-            return eth.fmt.hex(transformer.contract) === eth.fmt.hex(log.address) &&
-                eventSig2(transformer.eventAbi) === eventSig1(log);
-        }
-        function events(log) {
-            return utils_1.flatten(logTransformers
-                .filter(t => match(t, log))
-                .map(t => {
-                const result = eth.decodeLog(web3, log, [t.eventAbi]);
-                const pieces = t.transformer(log, result.parameters);
-                return pieces.map(p => ({
-                    id: log.blockHash + ',' + log.logIndex,
-                    event: p.event,
-                    data: p.data,
-                    log: log,
-                }));
-            }));
-        }
-        const receipts = yield Promise.all(block.transactions.map(tx => web3.eth.getTransactionReceipt(tx)));
-        const logs = utils_1.flatten(receipts.map(r => r.logs || []));
-        return utils_1.flatten(logs.map(events));
+        return utils_1.flatten((yield receipts(web3, block)).map(r => r.logs));
     });
+}
+function events(web3, log, logTransformers) {
+    function match(transformer, log) {
+        function eventSig1(log) {
+            return log.topics ? log.topics[0] : null;
+        }
+        const eventSig2 = (abi) => {
+            return web3.eth.abi.encodeEventSignature(r.pick(['name', 'type', 'inputs'], abi));
+        };
+        return eth.fmt.hex(transformer.contract) === eth.fmt.hex(log.address) &&
+            eventSig2(transformer.eventAbi) === eventSig1(log);
+    }
+    return logTransformers
+        .filter(t => match(t, log))
+        .map(t => {
+        const result = eth.decodeLog(web3, log, [t.eventAbi]);
+        const pieces = t.transformer(log, result.parameters);
+        return pieces.map(p => ({
+            id: EventId.make(log.blockHash, log.logIndex),
+            event: p.event,
+            data: p.data,
+            log: log,
+        }));
+    })
+        .reduce((acc, lst) => acc.concat(lst), []);
 }
 class Agent {
     constructor(makeProvider, txHasher, keys, confirmDepth) {
@@ -73,19 +83,21 @@ class Agent {
         const bs = new block_stream_1.default(confirmDepth);
         this.conn.onNewBlock(block => bs.inject(this.web3, block.number));
         bs.onConfirmedBlock((block) => __awaiter(this, void 0, void 0, function* () {
-            (yield events(this.web3, block, this.logTransformers))
-                .forEach(event => {
-                (this.eventListenersOf[event.event] || [])
-                    .forEach(conn => conn.sendUTF(JSON.stringify(event)));
-            });
+            (yield logs(this.web3, block))
+                .map(log => events(this.web3, log, this.logTransformers))
+                .reduce((acc, lst) => acc.concat(lst), [])
+                .forEach(event => this.emit(event));
         }));
         bs.onConfirmedBlock((block) => __awaiter(this, void 0, void 0, function* () {
-            const receipts = yield Promise.all(block.transactions.map(tx => this.web3.eth.getTransactionReceipt(tx)));
-            receipts.forEach(r => this.receiptStream.trigger(r));
+            (yield receipts(this.web3, block)).forEach(r => this.receiptStream.trigger(r));
         }));
     }
     get web3() {
         return this.conn.web3;
+    }
+    emit(event) {
+        (this.eventListenersOf[event.event] || [])
+            .forEach(conn => conn.sendUTF(JSON.stringify(event)));
     }
     exec(req) {
         return __awaiter(this, void 0, void 0, function* () {
