@@ -17,6 +17,7 @@ const block_stream_1 = require("./m/block-stream");
 const nonce_agent_1 = require("./m/nonce-agent");
 const event_stream_1 = require("./m/event-stream");
 const result = require("./m/result");
+const sync_queue_1 = require("./m/sync-queue");
 const utils_1 = require("./m/utils");
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
@@ -66,6 +67,21 @@ function events(web3, log, logTransformers) {
     })
         .reduce((acc, lst) => acc.concat(lst), []);
 }
+const q = new sync_queue_1.default();
+function _logsFrom(web3, block, logIndex, endBlock) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (endBlock() >= block) {
+            const blk = yield web3.eth.getBlock(block);
+            const _logs = (yield logs(web3, blk))
+                .filter(log => log.logIndex > logIndex);
+            return [_logs, () => _logsFrom(web3, block + 1, -1, endBlock)];
+        }
+        else {
+            return [[], null];
+        }
+    });
+}
+exports._logsFrom = _logsFrom;
 class Agent {
     constructor(makeProvider, txHasher, keys, confirmDepth) {
         this.makeProvider = makeProvider;
@@ -76,6 +92,7 @@ class Agent {
         this.actionOf = {};
         this.logTransformers = [];
         this.eventListenersOf = {};
+        this.confirmedBlockHead = null;
         keys.forEach(key => {
             const sender = eth.fmt.hex(ethUtils.privateToAddress(key).toString('hex'));
             this.nonceAgentOf[sender] = new nonce_agent_1.NonceAgent(this.web3, key);
@@ -83,10 +100,13 @@ class Agent {
         const bs = new block_stream_1.default(confirmDepth);
         this.conn.onNewBlock(block => bs.inject(this.web3, block.number));
         bs.onConfirmedBlock((block) => __awaiter(this, void 0, void 0, function* () {
-            (yield logs(this.web3, block))
-                .map(log => events(this.web3, log, this.logTransformers))
-                .reduce((acc, lst) => acc.concat(lst), [])
-                .forEach(event => this.emit(event));
+            q.push(() => __awaiter(this, void 0, void 0, function* () {
+                this.confirmedBlockHead = block;
+                (yield logs(this.web3, block))
+                    .map(log => events(this.web3, log, this.logTransformers))
+                    .reduce((acc, lst) => acc.concat(lst), [])
+                    .forEach(event => this.emit(event));
+            }));
         }));
         bs.onConfirmedBlock((block) => __awaiter(this, void 0, void 0, function* () {
             (yield receipts(this.web3, block)).forEach(r => this.receiptStream.trigger(r));
@@ -112,12 +132,41 @@ class Agent {
         });
     }
     setEventListener(req, connection) {
-        // 清除原本註冊的資料
-        this.eventListenersOf = r.mapObjIndexed((conns, event) => conns.filter(conn => conn !== connection), this.eventListenersOf);
-        req.events.forEach(event => {
-            this.eventListenersOf[event] = (this.eventListenersOf[event] || []).concat([connection]);
+        return __awaiter(this, void 0, void 0, function* () {
+            // 基本策略是先把舊的 event 傳出去後，再註冊 event listener
+            // 但如果 req.lastEventId 是非常久以前的 event，第一階段的工作會花很久時間
+            // 為了不阻塞其他 connection 的工作。把傳遞舊 event 的工作拆成很多塊
+            const register = () => {
+                // 清除原本註冊的資料
+                this.eventListenersOf = r.mapObjIndexed((conns, event) => conns.filter(conn => conn !== connection), this.eventListenersOf);
+                req.events.forEach(event => {
+                    this.eventListenersOf[event] = (this.eventListenersOf[event] || []).concat([connection]);
+                });
+            };
+            const emit = (logFetcher) => __awaiter(this, void 0, void 0, function* () {
+                const [logs, next] = yield logFetcher();
+                utils_1.flatten(logs.map(log => events(this.web3, log, this.logTransformers)))
+                    .forEach(event => connection.sendUTF(JSON.stringify(event)));
+                if (next !== null) {
+                    q.push(() => emit(next));
+                }
+                else {
+                    register();
+                }
+            });
+            if (req.lastEventId) {
+                yield utils_1.waitFor(() => this.confirmedBlockHead !== null, 1);
+                const [block, logIdx] = EventId.resolve(req.lastEventId);
+                this.web3.eth.getBlock(block)
+                    .then(block => {
+                    q.push(() => emit(() => _logsFrom(this.web3, block.number, logIdx, () => this.confirmedBlockHead.number)));
+                });
+            }
+            else {
+                register();
+            }
+            return result.of(req.events);
         });
-        return result.of(req.events);
     }
     serve(port, subprotocol) {
         this.conn.connect(this.makeProvider);
@@ -156,7 +205,7 @@ class Agent {
                         connection.sendUTF(JSON.stringify(result));
                     }
                     else if (req.type === 'EventsRequest') {
-                        const result = this.setEventListener(req, connection);
+                        const result = yield this.setEventListener(req, connection);
                         connection.sendUTF(JSON.stringify(result));
                     }
                     else {

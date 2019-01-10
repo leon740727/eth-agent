@@ -12,7 +12,8 @@ import BlockStream from './m/block-stream';
 import { NonceAgent, RawTx, Tx } from './m/nonce-agent';
 import EventStream from './m/event-stream';
 import * as result from './m/result';
-import { EventListener, flatten } from './m/utils';
+import SyncQueue from './m/sync-queue';
+import { EventListener, flatten, waitFor } from './m/utils';
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
 
@@ -121,6 +122,26 @@ function events (web3: Web3, log: Log, logTransformers: LogTransformer[]): Event
     .reduce((acc, lst) => acc.concat(lst), []);
 }
 
+const q = new SyncQueue();
+
+/* 為了測試才獨立出來 */
+type ContinuableResult<T> = [T, () => Promise<ContinuableResult<T>>];
+export async function _logsFrom (
+        web3: Web3,
+        block: number,
+        logIndex: number,
+        endBlock: () => number
+    ): Promise<ContinuableResult<Log[]>> {
+        if (endBlock() >= block) {
+            const blk = await web3.eth.getBlock(block);
+            const _logs = (await logs(web3, blk))
+            .filter(log => log.logIndex > logIndex);
+            return [_logs, () => _logsFrom(web3, block+1, -1, endBlock)];
+        } else {
+            return [[], null];
+        }
+    }
+
 export class Agent {
     private conn: Connector = new Connector();
     private nonceAgentOf: {[sender: string]: NonceAgent} = {};
@@ -128,6 +149,7 @@ export class Agent {
     private actionOf: {[command: string]: (args: Json[]) => Promise<result.Type<Json>>} = {};
     private logTransformers: LogTransformer[] = [];
     private eventListenersOf: {[event: string]: WSConnection[]} = {};
+    private confirmedBlockHead: Block = null;
 
     constructor (
         private makeProvider: () => Provider,
@@ -143,10 +165,13 @@ export class Agent {
         const bs = new BlockStream(confirmDepth);
         this.conn.onNewBlock(block => bs.inject(this.web3, block.number));
         bs.onConfirmedBlock(async block => {
-            (await logs(this.web3, block))
-            .map(log => events(this.web3, log, this.logTransformers))
-            .reduce((acc, lst) => acc.concat(lst), [])
-            .forEach(event => this.emit(event));
+            q.push(async () => {
+                this.confirmedBlockHead = block;
+                (await logs(this.web3, block))
+                .map(log => events(this.web3, log, this.logTransformers))
+                .reduce((acc, lst) => acc.concat(lst), [])
+                .forEach(event => this.emit(event));
+            });
         });
 
         bs.onConfirmedBlock(async block => {
@@ -173,15 +198,42 @@ export class Agent {
         }
     }
 
-    private setEventListener (req: EventsRequest, connection: WSConnection): result.Type<string[]> {
-        // 清除原本註冊的資料
-        this.eventListenersOf = r.mapObjIndexed(
-            (conns, event) => conns.filter(conn => conn !== connection),
-            this.eventListenersOf);
+    private async setEventListener (req: EventsRequest, connection: WSConnection): Promise<result.Type<string[]>> {
+        // 基本策略是先把舊的 event 傳出去後，再註冊 event listener
+        // 但如果 req.lastEventId 是非常久以前的 event，第一階段的工作會花很久時間
+        // 為了不阻塞其他 connection 的工作。把傳遞舊 event 的工作拆成很多塊
+        const register = () => {
+            // 清除原本註冊的資料
+            this.eventListenersOf = r.mapObjIndexed(
+                (conns, event) => conns.filter(conn => conn !== connection),
+                this.eventListenersOf);
+            req.events.forEach(event => {
+                this.eventListenersOf[event] = (this.eventListenersOf[event] || []).concat([connection]);
+            });
+        }
+
+        type Task = (logFetcher: () => Promise<ContinuableResult<Log[]>>) => Promise<any>;
+        const emit: Task = async logFetcher => {
+            const [ logs, next ] = await logFetcher();
+            flatten(logs.map(log => events(this.web3, log, this.logTransformers)))
+            .forEach(event => connection.sendUTF(JSON.stringify(event)));
+            if (next !== null) {
+                q.push(() => emit(next));
+            } else {
+                register();
+            }
+        }
         
-        req.events.forEach(event => {
-            this.eventListenersOf[event] = (this.eventListenersOf[event] || []).concat([connection]);
-        });
+        if (req.lastEventId) {
+            await waitFor(() => this.confirmedBlockHead !== null, 1);
+            const [block, logIdx] = EventId.resolve(req.lastEventId);
+            this.web3.eth.getBlock(block as any)
+            .then(block => {
+                q.push(() => emit(() => _logsFrom(this.web3, block.number, logIdx, () => this.confirmedBlockHead.number)));
+            });
+        } else {
+            register();
+        }
         return result.of(req.events);
     }
 
@@ -224,7 +276,7 @@ export class Agent {
                         const result = await this.exec(req);
                         connection.sendUTF(JSON.stringify(result));
                     } else if (req.type === 'EventsRequest') {
-                        const result = this.setEventListener(req, connection);
+                        const result = await this.setEventListener(req, connection);
                         connection.sendUTF(JSON.stringify(result));
                     } else {
                         const _: never = req;

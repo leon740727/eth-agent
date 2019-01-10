@@ -12,6 +12,15 @@ function wait(seconds) {
     });
 }
 exports.wait = wait;
+function waitFor(condition, interval) {
+    if (condition()) {
+        return Promise.resolve(undefined);
+    }
+    else {
+        return wait(interval).then(_ => waitFor(condition, interval));
+    }
+}
+exports.waitFor = waitFor;
 function second2time(second) {
     return second * 1000;
 }

@@ -13,6 +13,14 @@ export function wait (seconds: number): Promise<number> {
     });
 }
 
+export function waitFor (condition: () => boolean, interval: number): Promise<void> {
+    if (condition()) {
+        return Promise.resolve(undefined);
+    } else {
+        return wait(interval).then(_ => waitFor(condition, interval));
+    }
+}
+
 export function second2time (second: number) {
     return second * 1000;
 }
