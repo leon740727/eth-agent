@@ -46,7 +46,7 @@ agent.setLogTransformer(
     testResource.abi.filter(abi => abi.type === 'event' && abi.name === 'Add')[0],
     (log, data) => [{event: 'add', data: data.value}]);
 
-agent.setAction('add', async ([value]: [number]) => {
+agent.setAction('add', async (value: number) => {
     const test = new agent.web3.eth.Contract(testResource.abi, testAddr);
     const receipt = await agent.send(admin, makeTx(adminKey, testAddr, 0, test.methods.add(value).encodeABI()));
     return Result.of(value);

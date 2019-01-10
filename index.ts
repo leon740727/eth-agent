@@ -146,7 +146,7 @@ export class Agent {
     private conn: Connector = new Connector();
     private nonceAgentOf: {[sender: string]: NonceAgent} = {};
     private receiptStream: EventStream<TransactionReceipt> = new EventStream(receipt => eth.fmt.hex(receipt.transactionHash));
-    private actionOf: {[command: string]: (args: Json[]) => Promise<result.Type<Json>>} = {};
+    private actionOf: {[command: string]: (...args: Json[]) => Promise<result.Type<Json>>} = {};
     private logTransformers: LogTransformer[] = [];
     private eventListenersOf: {[event: string]: WSConnection[]} = {};
     private confirmedBlockHead: Block = null;
@@ -191,7 +191,7 @@ export class Agent {
     private async exec (req: ActionRequest): Promise<result.Type<Json>> {
         const handler = this.actionOf[req.command];
         if (handler) {
-            return handler(req.arguments)
+            return handler(...req.arguments)
             .catch(error => result.ofError<Json>(error.toString()));
         } else {
             return result.ofError(`action '${req.command}' not found`);
@@ -297,7 +297,7 @@ export class Agent {
         this.logTransformers.push({contract, eventAbi, transformer});
     }
 
-    setAction (command: string, handler: (args: Json[]) => Promise<result.Type<Json>>) {
+    setAction (command: string, handler: (...args: Json[]) => Promise<result.Type<Json>>) {
         this.actionOf[command] = handler;
     }
 }

@@ -123,7 +123,7 @@ class Agent {
         return __awaiter(this, void 0, void 0, function* () {
             const handler = this.actionOf[req.command];
             if (handler) {
-                return handler(req.arguments)
+                return handler(...req.arguments)
                     .catch(error => result.ofError(error.toString()));
             }
             else {
