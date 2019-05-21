@@ -16,6 +16,7 @@ const connector_1 = require("./connector");
 const block_stream_1 = require("./m/block-stream");
 const nonce_agent_1 = require("./m/nonce-agent");
 const event_stream_1 = require("./m/event-stream");
+const _EventId = require("./m/event-id");
 const result = require("./m/result");
 const sync_queue_1 = require("./m/sync-queue");
 const utils_1 = require("./m/utils");
@@ -26,13 +27,6 @@ var Result;
     Result.of = result.of;
     Result.ofError = result.ofError;
 })(Result = exports.Result || (exports.Result = {}));
-const EventId = {
-    make: (block, logIndex) => block + ',' + logIndex,
-    resolve: (id) => {
-        const [block, logIndex] = id.split(',');
-        return [block, parseInt(logIndex)];
-    }
-};
 function receipts(web3, block) {
     const txs = block.transactions;
     return Promise.all(txs.map(tx => web3.eth.getTransactionReceipt(tx)));
@@ -59,7 +53,7 @@ function events(web3, log, logTransformers) {
         const result = eth.decodeLog(web3, log, [t.eventAbi]);
         const pieces = t.transformer(log, result.parameters);
         return pieces.map(p => ({
-            id: EventId.make(log.blockHash, log.logIndex),
+            id: exports.EventId.make(log.blockHash, log.logIndex),
             event: p.event,
             data: p.data,
             log: log,
@@ -156,8 +150,8 @@ class Agent {
             });
             if (req.lastEventId) {
                 yield utils_1.waitFor(() => this.confirmedBlockHead !== null, 1);
-                const [block, logIdx] = EventId.resolve(req.lastEventId);
-                this.web3.eth.getBlock(block)
+                const logIdx = exports.EventId.logIndex(req.lastEventId);
+                this.web3.eth.getBlock(exports.EventId.block(req.lastEventId))
                     .then(block => {
                     q.push(() => emit(() => _logsFrom(this.web3, block.number, logIdx, () => this.confirmedBlockHead.number)));
                 });

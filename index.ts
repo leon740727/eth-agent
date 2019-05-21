@@ -11,12 +11,14 @@ import Connector from './connector';
 import BlockStream from './m/block-stream';
 import { NonceAgent, RawTx, Tx } from './m/nonce-agent';
 import EventStream from './m/event-stream';
+import * as _EventId from './m/event-id';
 import * as result from './m/result';
 import SyncQueue from './m/sync-queue';
 import { EventListener, flatten, waitFor } from './m/utils';
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
 
+export const EventId = _EventId;
 export { RawTx } from './m/nonce-agent';
 
 export namespace Result {
@@ -69,14 +71,6 @@ export type Event = {
     event: string,
     data: Json,
     log: Log,
-}
-
-const EventId = {
-    make: (block: string, logIndex: number) => block + ',' + logIndex,
-    resolve: (id: string): [string, number] => {
-        const [block, logIndex] = id.split(',');
-        return [block, parseInt(logIndex)];
-    }
 }
 
 type Transformer = (log: Log, decodedData: JsonObject) => {event: string, data: Json}[];
@@ -226,8 +220,8 @@ export class Agent {
         
         if (req.lastEventId) {
             await waitFor(() => this.confirmedBlockHead !== null, 1);
-            const [block, logIdx] = EventId.resolve(req.lastEventId);
-            this.web3.eth.getBlock(block as any)
+            const logIdx = EventId.logIndex(req.lastEventId);
+            this.web3.eth.getBlock(EventId.block(req.lastEventId) as any)
             .then(block => {
                 q.push(() => emit(() => _logsFrom(this.web3, block.number, logIdx, () => this.confirmedBlockHead.number)));
             });
