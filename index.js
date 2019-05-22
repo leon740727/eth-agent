@@ -22,6 +22,7 @@ const sync_queue_1 = require("./m/sync-queue");
 const utils_1 = require("./m/utils");
 const WebSocketServer = require('websocket').server;
 const WebSocketConnection = require('websocket').connection;
+exports.EventId = _EventId;
 var Result;
 (function (Result) {
     Result.of = result.of;
