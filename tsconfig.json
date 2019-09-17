@@ -7,13 +7,12 @@
     },
     "files": [
         "index.ts",
-        "test/nonce-agent.ts",
-        "test/event-listener.ts",
         "example/agent.ts",
         "example/client.ts",
     ],
     "include": [
         "m/@type/ethereumjs-util.d.ts",
         "m/@type/websocket.d.ts",
+        "test/*.ts",
     ]
 }

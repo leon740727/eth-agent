@@ -1,4 +1,5 @@
 import * as r from 'ramda';
+import { Result } from 'types';
 import Web3 = require('web3');
 import { Tx } from 'eth-utils';
 import * as eth from 'eth-utils';
@@ -50,9 +51,9 @@ export class NonceAgent {
             this.listeners.forEach(l => l(jid, tx));
         });
     });
-    private listeners: Listener<Tx>[] = [];
+    private listeners: Listener<Result<string, Tx>>[] = [];
 
-    private txStream: EventStream<Event<Tx>> = new EventStream<Event<Tx>>(event => event.id);
+    private txStream = new EventStream<Event<Result<string, Tx>>>(event => event.id);
 
     constructor (
         private web3: Web3,
@@ -67,44 +68,56 @@ export class NonceAgent {
     }
 
     /** 注意!!這個 Tx 還沒 send 出去，查不到 receipt */
-    send (rawTx: RawTx): Promise<Tx> {
+    send (rawTx: RawTx): Promise<Result<string, Tx>> {
         const jid = uuidv1();
         this.push(jid, rawTx);
         return this.txStream.waitFor(jid).then(event => event.data);
     }
 
-    onTx (listener: Listener<Tx>) {
+    onTx (listener: Listener<Result<string, Tx>>) {
         this.listeners.push(listener);
     }
 
-    private async resolve (rawTx: RawTx): Promise<Tx> {
-        const tryNonce: (rawTx: RawTx) => Promise<Tx> = async raw => {
+    private async resolve (rawTx: RawTx): Promise<Result<string, Tx>> {
+        // 交易的完整流程如下: RawTx => Tx => Receipt
+        // 但交易上了鏈才會有 Receipt，而上鏈的時間很難估計
+        // 所以 resolve 不會等待 Receipt，只要能得到正確的 Tx 就夠了 (nonce 不會太低，沒有超出 gas limit...)
+        const tryNonce: (rawTx: RawTx) => Promise<Result<string, Tx>> = async raw => {
             await utils.wait(5);              // 預防分叉
             const addr = '0x' + ethUtils.privateToAddress(this.key).toString('hex');
             const nonce = await this.web3.eth.getTransactionCount(addr);
             const tx = eth.sign(this.key, r.assoc('nonce', nonce, rawTx));
-            return this.web3.eth.sendSignedTransaction(eth.serialize(tx))
-            .then(_ => tx)
-            .catch((error: Error) => {
-                // the tx doesn't have the correct nonce. account has nonce of: 50 tx has nonce of: 49
-                if (error.message.match(/nonce/)) {     // nonce 錯誤
-                    return tryNonce(rawTx);
-                } else {
-                    return tx;
-                }
+
+            return new Promise<Result<string, Tx>>((resolve, reject) => {
+                this.web3.eth.sendSignedTransaction(eth.serialize(tx))
+                .on('transactionHash', _ => resolve(Result.ok(tx)))
+                .on('error', error => {
+                    // the tx doesn't have the correct nonce. account has nonce of: 50 tx has nonce of: 49
+                    if (error.message.match(/nonce/)) {     // nonce 錯誤
+                        tryNonce(rawTx).then(resolve);
+                    } else {
+                        resolve(Result.fail(error.message));
+                    }
+                });
             });
         }
         if (this.nonce === null) {
             const tx = await tryNonce(rawTx);
-            this.nonce = (typeof tx.nonce === 'number' ? tx.nonce : parseInt(tx.nonce)) + 1;
+            this.nonce = tx
+            .map(tx => (typeof tx.nonce === 'number' ? tx.nonce : parseInt(tx.nonce)) + 1)
+            .or_else(this.nonce);
             return tx;
         } else {
             const tx = eth.sign(this.key, r.assoc('nonce', this.nonce, rawTx));
-            this.nonce += 1;
             // 不需 await
-            this.web3.eth.sendSignedTransaction(eth.serialize(tx))
-            .catch(_ => _);
-            return tx;
+            return new Promise<Result<string, Tx>>((resolve, reject) => {
+                this.web3.eth.sendSignedTransaction(eth.serialize(tx))
+                .on('transactionHash', _ => {
+                    this.nonce += 1;
+                    resolve(Result.ok(tx));
+                })
+                .on('error', error => resolve(Result.fail(error.message)));
+            });
         }
     }
 }

@@ -9,6 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const r = require("ramda");
+const types_1 = require("types");
 const eth = require("eth-utils");
 const ethUtils = require("ethereumjs-util");
 const uuidv1 = require("uuid/v1");
@@ -56,35 +57,46 @@ class NonceAgent {
     }
     resolve(rawTx) {
         return __awaiter(this, void 0, void 0, function* () {
+            // 交易的完整流程如下: RawTx => Tx => Receipt
+            // 但交易上了鏈才會有 Receipt，而上鏈的時間很難估計
+            // 所以 resolve 不會等待 Receipt，只要能得到正確的 Tx 就夠了 (nonce 不會太低，沒有超出 gas limit...)
             const tryNonce = (raw) => __awaiter(this, void 0, void 0, function* () {
                 yield utils.wait(5); // 預防分叉
                 const addr = '0x' + ethUtils.privateToAddress(this.key).toString('hex');
                 const nonce = yield this.web3.eth.getTransactionCount(addr);
                 const tx = eth.sign(this.key, r.assoc('nonce', nonce, rawTx));
-                return this.web3.eth.sendSignedTransaction(eth.serialize(tx))
-                    .then(_ => tx)
-                    .catch((error) => {
-                    // the tx doesn't have the correct nonce. account has nonce of: 50 tx has nonce of: 49
-                    if (error.message.match(/nonce/)) { // nonce 錯誤
-                        return tryNonce(rawTx);
-                    }
-                    else {
-                        return tx;
-                    }
+                return new Promise((resolve, reject) => {
+                    this.web3.eth.sendSignedTransaction(eth.serialize(tx))
+                        .on('transactionHash', _ => resolve(types_1.Result.ok(tx)))
+                        .on('error', error => {
+                        // the tx doesn't have the correct nonce. account has nonce of: 50 tx has nonce of: 49
+                        if (error.message.match(/nonce/)) { // nonce 錯誤
+                            tryNonce(rawTx).then(resolve);
+                        }
+                        else {
+                            resolve(types_1.Result.fail(error.message));
+                        }
+                    });
                 });
             });
             if (this.nonce === null) {
                 const tx = yield tryNonce(rawTx);
-                this.nonce = (typeof tx.nonce === 'number' ? tx.nonce : parseInt(tx.nonce)) + 1;
+                this.nonce = tx
+                    .map(tx => (typeof tx.nonce === 'number' ? tx.nonce : parseInt(tx.nonce)) + 1)
+                    .or_else(this.nonce);
                 return tx;
             }
             else {
                 const tx = eth.sign(this.key, r.assoc('nonce', this.nonce, rawTx));
-                this.nonce += 1;
                 // 不需 await
-                this.web3.eth.sendSignedTransaction(eth.serialize(tx))
-                    .catch(_ => _);
-                return tx;
+                return new Promise((resolve, reject) => {
+                    this.web3.eth.sendSignedTransaction(eth.serialize(tx))
+                        .on('transactionHash', _ => {
+                        this.nonce += 1;
+                        resolve(types_1.Result.ok(tx));
+                    })
+                        .on('error', error => resolve(types_1.Result.fail(error.message)));
+                });
             }
         });
     }

@@ -23,6 +23,7 @@
     "ethereumjs-tx": "^1.3.7",
     "ethereumjs-util": "^6.1.0",
     "ramda": "^0.26.0",
+    "types": "git://github.com/leon740727/types.git",
     "uuid": "^3.3.3",
     "web3": "1.0.0-beta.36",
     "websocket": "^1.0.29"

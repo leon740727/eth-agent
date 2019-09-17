@@ -281,9 +281,14 @@ export class Agent {
     }
 
     /** helper */
-    async send (sender: string, rawTx: RawTx): Promise<TransactionReceipt> {
+    async send (sender: string, rawTx: RawTx): Promise<Result.Type<TransactionReceipt>> {
         const tx = await this.nonceAgentOf[eth.fmt.hex(sender)].send(rawTx);
-        return this.receiptStream.waitFor(eth.fmt.hex(this.txHasher(tx)));
+
+        return tx
+        .map(tx => this.receiptStream.waitFor(eth.fmt.hex(this.txHasher(tx))))
+        .either(
+            async error => Result.ofError<TransactionReceipt>(error),
+            async receipt => Result.of<TransactionReceipt>(await receipt));
     }
 
     /** 將收到的 Log 轉成 Event */

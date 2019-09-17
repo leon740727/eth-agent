@@ -5,6 +5,7 @@ declare module "websocket" {
         close ();
         
         onopen (): void;
+        onclose (): void;
         onmessage (message: {data: string}): void;
         onerror (): void;
     }

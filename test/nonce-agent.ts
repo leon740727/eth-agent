@@ -1,5 +1,6 @@
 import * as r from 'ramda';
 import { expect } from 'chai';
+import { Result } from 'types';
 import Web3 = require('web3');
 import * as sinon from 'sinon';
 import * as eth from 'eth-utils';
@@ -56,12 +57,12 @@ describe('nonce agent', () => {
 
         const agent = new NonceAgent(web3, leonKey);
         return new Promise((resolve, reject) => {
-            const results: Tx[] = [];
+            const results: Result<string, Tx>[] = [];
             agent.onTx((jid, tx) => {
                 results.push(tx);
                 if (results.length === txs.length) {
                     results.forEach(r => {
-                        expect(r.nonce).eql(r.value);
+                        expect(r.map(tx => tx.nonce === tx.value).or_else(false)).eql(true);
                     });
                     expect(waitCount).eql(2);
                     setTimeout(() => resolve(), 1000);       // 第二個交易不用等完成就會傳出 tx
@@ -85,6 +86,19 @@ describe('nonce agent', () => {
         agent.push('j1', makeTx(1));
         agent.push('j2', makeTx(2));
         agent.push('j3', makeTx(2));
+    });
+
+    it('on error', async () => {
+        sinon.replace(utils, 'wait', (sec, v) => Promise.resolve(v));
+        const raw = {
+            to: iris,
+            value: 1,
+            gasPrice: 0,
+            gasLimit: 10,           // gas limit too low
+        };
+        const agent = new NonceAgent(web3, leonKey);
+        const tx = await agent.send(raw);
+        expect(tx.either(error => error, null)).eql('Returned error: base fee exceeds gas limit');
     });
     
     afterEach(() => sinon.restore());

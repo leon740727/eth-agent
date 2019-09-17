@@ -214,7 +214,9 @@ class Agent {
     send(sender, rawTx) {
         return __awaiter(this, void 0, void 0, function* () {
             const tx = yield this.nonceAgentOf[eth.fmt.hex(sender)].send(rawTx);
-            return this.receiptStream.waitFor(eth.fmt.hex(this.txHasher(tx)));
+            return tx
+                .map(tx => this.receiptStream.waitFor(eth.fmt.hex(this.txHasher(tx))))
+                .either((error) => __awaiter(this, void 0, void 0, function* () { return Result.ofError(error); }), (receipt) => __awaiter(this, void 0, void 0, function* () { return Result.of(yield receipt); }));
         });
     }
     /** 將收到的 Log 轉成 Event */
