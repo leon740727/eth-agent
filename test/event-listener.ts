@@ -2,11 +2,12 @@ import { expect } from 'chai';
 import * as r from 'ramda';
 import * as fs from 'fs';
 import Web3 = require('web3');
-import { Log } from 'web3/types';
+import { Log, TransactionReceipt } from 'web3/types';
 import { ABIDefinition  } from 'web3/eth/abi';
 import Contract from 'web3/eth/contract';
 import * as eth from 'eth-utils';
 import { privateToAddress } from 'ethereumjs-util';
+import Task from '../m/sync-queue';
 import { RawTx } from '../m/nonce-agent';
 import { _logsFrom } from '../';
 
@@ -53,7 +54,9 @@ describe('event listener', () => {
             r.assoc('nonce', nonce + 4, makeTx(5)),
         ]
         .map(raw => eth.sign(key, raw));
-        const [r1, r2, r3, r4, r5] = await Promise.all(txs.map(tx => web3.eth.sendSignedTransaction(eth.serialize(tx))));
+        // 依序執行才不會遇到 nonce 的問題
+        const task = new Task<TransactionReceipt>();
+        const [r1, r2, r3, r4, r5] = await Promise.all(txs.map(tx => task.push(() => web3.eth.sendSignedTransaction(eth.serialize(tx)))));
         let logs: Log[] = null;
         let next: () => Promise<any> = null;
 

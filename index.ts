@@ -116,7 +116,7 @@ function events (web3: Web3, log: Log, logTransformers: LogTransformer[]): Event
     .reduce((acc, lst) => acc.concat(lst), []);
 }
 
-const q = new SyncQueue();
+const q = new SyncQueue<void>();
 
 /* 為了測試才獨立出來 */
 type ContinuableResult<T> = [T, () => Promise<ContinuableResult<T>>];
